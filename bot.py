@@ -23,6 +23,20 @@ import yt_dlp
 
 
 # ────────────────────────────────────────────────
+# HELPERS
+# ────────────────────────────────────────────────
+def safe_json_loads(data, default=None):
+    if not data:
+        return default if default is not None else []
+    try:
+        if isinstance(data, (str, bytes)):
+            return json.loads(data)
+        return data # Already parsed?
+    except (json.JSONDecodeError, TypeError, ValueError):
+        return default if default is not None else []
+
+
+# ────────────────────────────────────────────────
 # ENV
 # ────────────────────────────────────────────────
 load_dotenv()
@@ -268,8 +282,8 @@ async def db_get_shared_expenses(guild_id: str):
         cursor.execute("SELECT * FROM shared_expenses WHERE guild_id = %s", (guild_id,))
         expenses = cursor.fetchall()
         for exp in expenses:
-            exp['mentioned_users'] = json.loads(exp['mentioned_users']) if exp['mentioned_users'] else []
-            exp['paid_users'] = json.loads(exp['paid_users']) if exp['paid_users'] else []
+            exp['mentioned_users'] = safe_json_loads(exp['mentioned_users'])
+            exp['paid_users'] = safe_json_loads(exp['paid_users'])
         return expenses
     except Error as e:
         print(f"Error getting shared expenses: {e}")
@@ -309,7 +323,7 @@ async def db_mark_user_paid(expense_id: str, user_id: str):
         result = cursor.fetchone()
         if not result:
             return False
-        paid_users = json.loads(result['paid_users']) if result['paid_users'] else []
+        paid_users = safe_json_loads(result['paid_users'])
         if user_id not in paid_users:
             paid_users.append(user_id)
             cursor.execute("UPDATE shared_expenses SET paid_users = %s WHERE expense_id = %s", (json.dumps(paid_users), expense_id))
@@ -506,7 +520,7 @@ async def db_get_events(guild_id: str):
             {
                 "event_id": e["event_id"],
                 "title": e["title"],
-                "members": json.loads(e["members"]) if e["members"] else [],
+                "members": safe_json_loads(e["members"]),
                 "creator_id": e["creator_id"],
                 "datetime": e["datetime"].isoformat() if e["datetime"] else None,
                 "channel_id": int(e["channel_id"]) if e["channel_id"] else None,
@@ -596,7 +610,7 @@ async def db_get_assignments(guild_id: str):
                 "description": a["description"],
                 "deadline": a["deadline"].strftime("%Y-%m-%d %H:%M") if a["deadline"] else None,
                 "subject": a["subject"],
-                "file_paths": json.loads(a["file_paths"]) if a["file_paths"] else [],
+                "file_paths": safe_json_loads(a["file_paths"]),
                 "creator_id": a["creator_id"],
             }
             for a in assignments_data
@@ -682,7 +696,7 @@ async def db_get_notes(guild_id: str):
                 "note_id": n["note_id"],
                 "title": n["title"],
                 "subject": n["subject"],
-                "file_paths": json.loads(n["file_paths"]) if n["file_paths"] else [],
+                "file_paths": safe_json_loads(n["file_paths"]),
                 "creator_id": n["creator_id"],
             }
             for n in notes_data

@@ -1,0 +1,33 @@
+Week 7 – Assignment 7 Submission
+Last Recorded Submission: 2026-03-01, 09:54 IST
+Due Date: 2026-03-11, 23:59 IST
+
+1. When regression assumptions about the error term are violated, which of the following may occur?
+Answer: Hypothesis testing results become unreliable
+
+2. Residual analysis is primarily used to:
+Answer: Validate regression model assumptions
+
+3. If the variance of residuals increases as the value of the independent variable increases, this indicates:
+Answer: Heteroscedasticity
+
+4. A residual plot showing a clear curved pattern suggests:
+Answer: A linear model may be inappropriate
+
+5. Standardized residuals are primarily used to:
+Answer: Detect outliers
+
+6. If residuals exhibit non-constant variance, the immediate consequence is:
+Answer: Invalid hypothesis tests and confidence intervals
+
+7. In a multiple linear regression model, multicollinearity primarily affects:
+Answer: The stability and standard errors of coefficient estimates
+
+8. In multiple regression, adjusted R² is preferred over R² because it:
+Answer: Penalizes the inclusion of irrelevant independent variables
+
+9. In a multiple regression model with k independent variables, the overall F-test is used to test whether:
+Answer: At least one independent variable is statistically significant
+
+10. In a regression model with a dummy variable representing gender (Male = 1, Female = 0), the coefficient of the dummy variable represents:
+Answer: The difference in mean dependent variable between males and females
