@@ -1,0 +1,5 @@
+.venv
+lab-manuals/
+.env
+aids-attendance-system-firebase-adminsdk.json
+paytest/
