@@ -242,6 +242,29 @@ async def initialize_db():
                 paid_users TEXT
             )
         """)
+        # Create 'timetable' table 
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS timetable (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                day_of_week ENUM('Monday','Tuesday','Wednesday','Thursday','Friday') NOT NULL,
+                period_number INT NOT NULL,
+                start_time TIME NOT NULL,
+                end_time TIME NOT NULL,
+                subject_code VARCHAR(50) NOT NULL,
+                batch VARCHAR(10) NULL,
+                remarks VARCHAR(100) NULL
+            )
+        """)
+        # Create 'academic_calendar' table 
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS academic_calendar (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                event_date DATE NOT NULL,
+                title VARCHAR(255) NOT NULL,
+                type ENUM('Academic','Exam','Assignment','Meeting','Activity','Holiday') NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
         conn.commit()
         print("MySQL database tables initialized successfully.")
 
