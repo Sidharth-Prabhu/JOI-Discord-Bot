@@ -1116,7 +1116,7 @@ def get_attendance_data(reg):
 yt_dlp.utils.DEFAULT_OUTTMPL = '%(extractor)s-%(id)s-%(title)s.%(ext)s'
 
 ytdl_format_options = {
-    'format': 'bestaudio/best',
+    'format': 'bestaudio[ext=m4a]/bestaudio/best',
     'outtmpl': 'downloads/%(extractor)s-%(id)s-%(title)s.%(ext)s', # Output template
     'restrictfilenames': True,
     'noplaylist': True,
@@ -1127,9 +1127,11 @@ ytdl_format_options = {
     'no_warnings': True,
     'default_search': 'auto',
     'source_address': '0.0.0.0', # bind to ipv4 since ipv6 addresses cause issues sometimes
+    'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
 }
 
 ffmpeg_options = {
+    'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_at_eof 1 -reconnect_delay_max 5 -headers "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36\r\n"',
     'options': '-vn' # No video
 }
 
