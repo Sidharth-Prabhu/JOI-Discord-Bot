@@ -1,3 +1,5 @@
+
+from discord.ext import tasks
 import os
 import json
 import re
@@ -20,6 +22,8 @@ from firebase_admin import credentials, firestore
 import math
 import random
 import yt_dlp
+from academic_calendar import setup as setup_academic_calendar
+from timetable_manager import setup as setup_timetable
 
 
 # ────────────────────────────────────────────────
@@ -31,7 +35,7 @@ def safe_json_loads(data, default=None):
     try:
         if isinstance(data, (str, bytes)):
             return json.loads(data)
-        return data # Already parsed?
+        return data  # Already parsed?
     except (json.JSONDecodeError, TypeError, ValueError):
         return default if default is not None else []
 
@@ -58,11 +62,14 @@ if not DEFAULT_GUILD_ID:
     print("[WARN] DEFAULT_GUILD_ID not set in .env → web uploads will fail")
 
 if not all([MYSQL_HOST, MYSQL_USER, MYSQL_PASSWORD, MYSQL_DATABASE]):
-    raise RuntimeError("Missing one or more MySQL environment variables: MYSQL_HOST, MYSQL_USER, MYSQL_PASSWORD, MYSQL_DATABASE")
+    raise RuntimeError(
+        "Missing one or more MySQL environment variables: MYSQL_HOST, MYSQL_USER, MYSQL_PASSWORD, MYSQL_DATABASE")
 
 # ────────────────────────────────────────────────
 # DATABASE CONNECTION
 # ────────────────────────────────────────────────
+
+
 async def get_db_connection():
     try:
         conn = mysql.connector.connect(
@@ -75,6 +82,7 @@ async def get_db_connection():
     except Error as e:
         print(f"Error connecting to MySQL database: {e}")
         return None
+
 
 async def initialize_db():
     conn = await get_db_connection()
@@ -171,7 +179,8 @@ async def initialize_db():
 
         # Add 'nickname' column if it doesn't exist
         try:
-            cursor.execute("ALTER TABLE users_info ADD COLUMN nickname VARCHAR(255)")
+            cursor.execute(
+                "ALTER TABLE users_info ADD COLUMN nickname VARCHAR(255)")
         except Error as e:
             if "Duplicate column name 'nickname'" not in str(e):
                 raise
@@ -185,7 +194,8 @@ async def initialize_db():
 
         # Add 'mood' column if it doesn't exist
         try:
-            cursor.execute("ALTER TABLE users_info ADD COLUMN mood VARCHAR(255)")
+            cursor.execute(
+                "ALTER TABLE users_info ADD COLUMN mood VARCHAR(255)")
         except Error as e:
             if "Duplicate column name 'mood'" not in str(e):
                 raise
@@ -239,6 +249,29 @@ async def initialize_db():
                 paid_users TEXT
             )
         """)
+        # Create 'timetable' table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS timetable (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                day_of_week ENUM('Monday','Tuesday','Wednesday','Thursday','Friday') NOT NULL,
+                period_number INT NOT NULL,
+                start_time TIME NOT NULL,
+                end_time TIME NOT NULL,
+                subject_code VARCHAR(50) NOT NULL,
+                batch VARCHAR(10) NULL,
+                remarks VARCHAR(100) NULL
+            )
+        """)
+        # Create 'academic_calendar' table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS academic_calendar (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                event_date DATE NOT NULL,
+                title VARCHAR(255) NOT NULL,
+                type ENUM('Academic','Exam','Assignment','Meeting','Activity','Holiday') NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
         conn.commit()
         print("MySQL database tables initialized successfully.")
 
@@ -252,6 +285,8 @@ async def initialize_db():
 # ────────────────────────────────────────────────
 # DATABASE SHARED EXPENSES FUNCTIONS
 # ────────────────────────────────────────────────
+
+
 async def db_add_shared_expense(guild_id: str, channel_id: str, creator_id: str, title: str, total_amount: float, split_count: int, due_date: datetime, payment_url: str, is_recurring: bool, mentioned_users: list):
     conn = await get_db_connection()
     if conn is None:
@@ -261,7 +296,8 @@ async def db_add_shared_expense(guild_id: str, channel_id: str, creator_id: str,
         expense_id = str(uuid.uuid4())
         cursor.execute(
             "INSERT INTO shared_expenses (expense_id, guild_id, channel_id, creator_id, title, total_amount, split_count, due_date, payment_url, is_recurring, mentioned_users, paid_users) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
-            (expense_id, guild_id, channel_id, creator_id, title, total_amount, split_count, due_date, payment_url, is_recurring, json.dumps(mentioned_users), json.dumps([]))
+            (expense_id, guild_id, channel_id, creator_id, title, total_amount, split_count,
+             due_date, payment_url, is_recurring, json.dumps(mentioned_users), json.dumps([]))
         )
         conn.commit()
         return True
@@ -273,13 +309,15 @@ async def db_add_shared_expense(guild_id: str, channel_id: str, creator_id: str,
             cursor.close()
             conn.close()
 
+
 async def db_get_shared_expenses(guild_id: str):
     conn = await get_db_connection()
     if conn is None:
         return []
     try:
         cursor = conn.cursor(dictionary=True)
-        cursor.execute("SELECT * FROM shared_expenses WHERE guild_id = %s", (guild_id,))
+        cursor.execute(
+            "SELECT * FROM shared_expenses WHERE guild_id = %s", (guild_id,))
         expenses = cursor.fetchall()
         for exp in expenses:
             exp['mentioned_users'] = safe_json_loads(exp['mentioned_users'])
@@ -293,6 +331,7 @@ async def db_get_shared_expenses(guild_id: str):
             cursor.close()
             conn.close()
 
+
 async def db_update_shared_expense(expense_id: str, title: str, total_amount: float, split_count: int, due_date: datetime, payment_url: str, is_recurring: bool):
     conn = await get_db_connection()
     if conn is None:
@@ -301,7 +340,8 @@ async def db_update_shared_expense(expense_id: str, title: str, total_amount: fl
         cursor = conn.cursor()
         cursor.execute(
             "UPDATE shared_expenses SET title = %s, total_amount = %s, split_count = %s, due_date = %s, payment_url = %s, is_recurring = %s WHERE expense_id = %s",
-            (title, total_amount, split_count, due_date, payment_url, is_recurring, expense_id)
+            (title, total_amount, split_count, due_date,
+             payment_url, is_recurring, expense_id)
         )
         conn.commit()
         return True
@@ -313,20 +353,23 @@ async def db_update_shared_expense(expense_id: str, title: str, total_amount: fl
             cursor.close()
             conn.close()
 
+
 async def db_mark_user_paid(expense_id: str, user_id: str):
     conn = await get_db_connection()
     if conn is None:
         return False
     try:
         cursor = conn.cursor(dictionary=True)
-        cursor.execute("SELECT paid_users FROM shared_expenses WHERE expense_id = %s", (expense_id,))
+        cursor.execute(
+            "SELECT paid_users FROM shared_expenses WHERE expense_id = %s", (expense_id,))
         result = cursor.fetchone()
         if not result:
             return False
         paid_users = safe_json_loads(result['paid_users'])
         if user_id not in paid_users:
             paid_users.append(user_id)
-            cursor.execute("UPDATE shared_expenses SET paid_users = %s WHERE expense_id = %s", (json.dumps(paid_users), expense_id))
+            cursor.execute("UPDATE shared_expenses SET paid_users = %s WHERE expense_id = %s",
+                           (json.dumps(paid_users), expense_id))
             conn.commit()
         return True
     except Error as e:
@@ -337,13 +380,15 @@ async def db_mark_user_paid(expense_id: str, user_id: str):
             cursor.close()
             conn.close()
 
+
 async def db_delete_shared_expense(expense_id: str):
     conn = await get_db_connection()
     if conn is None:
         return False
     try:
         cursor = conn.cursor()
-        cursor.execute("DELETE FROM shared_expenses WHERE expense_id = %s", (expense_id,))
+        cursor.execute(
+            "DELETE FROM shared_expenses WHERE expense_id = %s", (expense_id,))
         conn.commit()
         return True
     except Error as e:
@@ -357,13 +402,16 @@ async def db_delete_shared_expense(expense_id: str):
 # ────────────────────────────────────────────────
 # DATABASE REMINDERS FUNCTIONS
 # ────────────────────────────────────────────────
+
+
 async def db_get_reminders(guild_id: str):
     conn = await get_db_connection()
     if conn is None:
         return []
     try:
         cursor = conn.cursor(dictionary=True)
-        cursor.execute("SELECT reminder_id, title, creator_id, datetime, channel_id FROM reminders WHERE guild_id = %s", (guild_id,))
+        cursor.execute(
+            "SELECT reminder_id, title, creator_id, datetime, channel_id FROM reminders WHERE guild_id = %s", (guild_id,))
         reminders_data = cursor.fetchall()
         return [
             {
@@ -382,6 +430,7 @@ async def db_get_reminders(guild_id: str):
         if conn and conn.is_connected():
             cursor.close()
             conn.close()
+
 
 async def db_add_reminder(guild_id: str, reminder_id: str, title: str, creator_id: str, datetime_obj: datetime, channel_id: int):
     conn = await get_db_connection()
@@ -403,13 +452,15 @@ async def db_add_reminder(guild_id: str, reminder_id: str, title: str, creator_i
             cursor.close()
             conn.close()
 
+
 async def db_delete_reminder(guild_id: str, reminder_id: str):
     conn = await get_db_connection()
     if conn is None:
         return False
     try:
         cursor = conn.cursor()
-        cursor.execute("DELETE FROM reminders WHERE guild_id = %s AND reminder_id = %s", (guild_id, reminder_id))
+        cursor.execute(
+            "DELETE FROM reminders WHERE guild_id = %s AND reminder_id = %s", (guild_id, reminder_id))
         conn.commit()
         return cursor.rowcount > 0
     except Error as e:
@@ -419,6 +470,7 @@ async def db_delete_reminder(guild_id: str, reminder_id: str):
         if conn and conn.is_connected():
             cursor.close()
             conn.close()
+
 
 async def db_update_reminder_datetime(guild_id: str, reminder_id: str, datetime_obj: datetime, channel_id: int):
     conn = await get_db_connection()
@@ -443,13 +495,16 @@ async def db_update_reminder_datetime(guild_id: str, reminder_id: str, datetime_
 # ────────────────────────────────────────────────
 # DATABASE TODO FUNCTIONS
 # ────────────────────────────────────────────────
+
+
 async def db_get_todos(guild_id: str):
     conn = await get_db_connection()
     if conn is None:
         return []
     try:
         cursor = conn.cursor(dictionary=True)
-        cursor.execute("SELECT task_id, text, created_by, created_at FROM todos WHERE guild_id = %s", (guild_id,))
+        cursor.execute(
+            "SELECT task_id, text, created_by, created_at FROM todos WHERE guild_id = %s", (guild_id,))
         todos_data = cursor.fetchall()
         return [
             {
@@ -467,6 +522,7 @@ async def db_get_todos(guild_id: str):
         if conn and conn.is_connected():
             cursor.close()
             conn.close()
+
 
 async def db_add_todo(guild_id: str, task_id: str, text: str, created_by: str, created_at: datetime):
     conn = await get_db_connection()
@@ -488,13 +544,15 @@ async def db_add_todo(guild_id: str, task_id: str, text: str, created_by: str, c
             cursor.close()
             conn.close()
 
+
 async def db_delete_todo(guild_id: str, task_id: str):
     conn = await get_db_connection()
     if conn is None:
         return False
     try:
         cursor = conn.cursor()
-        cursor.execute("DELETE FROM todos WHERE guild_id = %s AND task_id = %s", (guild_id, task_id))
+        cursor.execute(
+            "DELETE FROM todos WHERE guild_id = %s AND task_id = %s", (guild_id, task_id))
         conn.commit()
         return cursor.rowcount > 0
     except Error as e:
@@ -508,13 +566,16 @@ async def db_delete_todo(guild_id: str, task_id: str):
 # ────────────────────────────────────────────────
 # DATABASE EVENTS FUNCTIONS
 # ────────────────────────────────────────────────
+
+
 async def db_get_events(guild_id: str):
     conn = await get_db_connection()
     if conn is None:
         return []
     try:
         cursor = conn.cursor(dictionary=True)
-        cursor.execute("SELECT event_id, title, members, creator_id, datetime, channel_id FROM events WHERE guild_id = %s", (guild_id,))
+        cursor.execute(
+            "SELECT event_id, title, members, creator_id, datetime, channel_id FROM events WHERE guild_id = %s", (guild_id,))
         events_data = cursor.fetchall()
         return [
             {
@@ -535,6 +596,7 @@ async def db_get_events(guild_id: str):
             cursor.close()
             conn.close()
 
+
 async def db_add_event(guild_id: str, event_id: str, title: str, members: list, creator_id: str, datetime_obj: datetime, channel_id: int):
     conn = await get_db_connection()
     if conn is None:
@@ -543,7 +605,8 @@ async def db_add_event(guild_id: str, event_id: str, title: str, members: list, 
         cursor = conn.cursor()
         cursor.execute(
             "INSERT INTO events (event_id, guild_id, title, members, creator_id, datetime, channel_id) VALUES (%s, %s, %s, %s, %s, %s, %s)",
-            (event_id, guild_id, title, json.dumps(members), creator_id, datetime_obj, str(channel_id))
+            (event_id, guild_id, title, json.dumps(members),
+             creator_id, datetime_obj, str(channel_id))
         )
         conn.commit()
         return True
@@ -555,13 +618,15 @@ async def db_add_event(guild_id: str, event_id: str, title: str, members: list, 
             cursor.close()
             conn.close()
 
+
 async def db_delete_event(guild_id: str, event_id: str):
     conn = await get_db_connection()
     if conn is None:
         return False
     try:
         cursor = conn.cursor()
-        cursor.execute("DELETE FROM events WHERE guild_id = %s AND event_id = %s", (guild_id, event_id))
+        cursor.execute(
+            "DELETE FROM events WHERE guild_id = %s AND event_id = %s", (guild_id, event_id))
         conn.commit()
         return cursor.rowcount > 0
     except Error as e:
@@ -571,6 +636,7 @@ async def db_delete_event(guild_id: str, event_id: str):
         if conn and conn.is_connected():
             cursor.close()
             conn.close()
+
 
 async def db_update_event_datetime(guild_id: str, event_id: str, datetime_obj: datetime, channel_id: int):
     conn = await get_db_connection()
@@ -595,13 +661,16 @@ async def db_update_event_datetime(guild_id: str, event_id: str, datetime_obj: d
 # ────────────────────────────────────────────────
 # DATABASE ASSIGNMENT FUNCTIONS
 # ────────────────────────────────────────────────
+
+
 async def db_get_assignments(guild_id: str):
     conn = await get_db_connection()
     if conn is None:
         return []
     try:
         cursor = conn.cursor(dictionary=True)
-        cursor.execute("SELECT assignment_id, title, description, deadline, subject, file_paths, creator_id FROM assignments WHERE guild_id = %s", (guild_id,))
+        cursor.execute(
+            "SELECT assignment_id, title, description, deadline, subject, file_paths, creator_id FROM assignments WHERE guild_id = %s", (guild_id,))
         assignments_data = cursor.fetchall()
         return [
             {
@@ -623,6 +692,7 @@ async def db_get_assignments(guild_id: str):
             cursor.close()
             conn.close()
 
+
 async def db_add_assignment(guild_id: str, assignment_id: str, title: str, description: str, deadline: datetime, subject: str, file_paths: list, creator_id: str):
     conn = await get_db_connection()
     if conn is None:
@@ -631,7 +701,8 @@ async def db_add_assignment(guild_id: str, assignment_id: str, title: str, descr
         cursor = conn.cursor()
         cursor.execute(
             "INSERT INTO assignments (assignment_id, guild_id, title, description, deadline, subject, file_paths, creator_id) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
-            (assignment_id, guild_id, title, description, deadline, subject, json.dumps(file_paths), creator_id)
+            (assignment_id, guild_id, title, description,
+             deadline, subject, json.dumps(file_paths), creator_id)
         )
         conn.commit()
         return True
@@ -643,13 +714,15 @@ async def db_add_assignment(guild_id: str, assignment_id: str, title: str, descr
             cursor.close()
             conn.close()
 
+
 async def db_delete_assignment(guild_id: str, assignment_id: str):
     conn = await get_db_connection()
     if conn is None:
         return False
     try:
         cursor = conn.cursor()
-        cursor.execute("DELETE FROM assignments WHERE guild_id = %s AND assignment_id = %s", (guild_id, assignment_id))
+        cursor.execute(
+            "DELETE FROM assignments WHERE guild_id = %s AND assignment_id = %s", (guild_id, assignment_id))
         conn.commit()
         return cursor.rowcount > 0
     except Error as e:
@@ -659,6 +732,7 @@ async def db_delete_assignment(guild_id: str, assignment_id: str):
         if conn and conn.is_connected():
             cursor.close()
             conn.close()
+
 
 async def db_update_assignment_files(guild_id: str, assignment_id: str, file_paths: list):
     conn = await get_db_connection()
@@ -683,13 +757,16 @@ async def db_update_assignment_files(guild_id: str, assignment_id: str, file_pat
 # ────────────────────────────────────────────────
 # DATABASE NOTES FUNCTIONS
 # ────────────────────────────────────────────────
+
+
 async def db_get_notes(guild_id: str):
     conn = await get_db_connection()
     if conn is None:
         return []
     try:
         cursor = conn.cursor(dictionary=True)
-        cursor.execute("SELECT note_id, title, subject, file_paths, creator_id FROM notes WHERE guild_id = %s", (guild_id,))
+        cursor.execute(
+            "SELECT note_id, title, subject, file_paths, creator_id FROM notes WHERE guild_id = %s", (guild_id,))
         notes_data = cursor.fetchall()
         return [
             {
@@ -708,6 +785,7 @@ async def db_get_notes(guild_id: str):
         if conn and conn.is_connected():
             cursor.close()
             conn.close()
+
 
 async def db_add_note(guild_id: str, note_id: str, title: str, subject: str, file_paths: list, creator_id: str):
     conn = await get_db_connection()
@@ -728,6 +806,7 @@ async def db_add_note(guild_id: str, note_id: str, title: str, subject: str, fil
         if conn and conn.is_connected():
             cursor.close()
             conn.close()
+
 
 async def db_update_note_files(guild_id: str, note_id: str, file_paths: list):
     conn = await get_db_connection()
@@ -752,13 +831,16 @@ async def db_update_note_files(guild_id: str, note_id: str, file_paths: list):
 # ────────────────────────────────────────────────
 # DATABASE REGISTRATIONS FUNCTIONS
 # ────────────────────────────────────────────────
+
+
 async def db_get_registration(username: str):
     conn = await get_db_connection()
     if conn is None:
         return None
     try:
         cursor = conn.cursor(dictionary=True)
-        cursor.execute("SELECT reg_number FROM registrations WHERE username = %s", (username,))
+        cursor.execute(
+            "SELECT reg_number FROM registrations WHERE username = %s", (username,))
         result = cursor.fetchone()
         return result['reg_number'] if result else None
     except Error as e:
@@ -768,6 +850,7 @@ async def db_get_registration(username: str):
         if conn and conn.is_connected():
             cursor.close()
             conn.close()
+
 
 async def db_set_registration(username: str, reg_number: str):
     conn = await get_db_connection()
@@ -789,13 +872,15 @@ async def db_set_registration(username: str, reg_number: str):
             cursor.close()
             conn.close()
 
+
 async def db_get_user_info(discord_id: str):
     conn = await get_db_connection()
     if conn is None:
         return None
     try:
         cursor = conn.cursor(dictionary=True)
-        cursor.execute("SELECT discord_id, username, nickname, age, mood, hobbies, challenges, created_at FROM users_info WHERE discord_id = %s", (discord_id,))
+        cursor.execute(
+            "SELECT discord_id, username, nickname, age, mood, hobbies, challenges, created_at FROM users_info WHERE discord_id = %s", (discord_id,))
         result = cursor.fetchone()
         return result
     except Error as e:
@@ -806,6 +891,7 @@ async def db_get_user_info(discord_id: str):
             cursor.close()
             conn.close()
 
+
 async def db_add_user_info(discord_id: str, username: str, nickname: str, age: int, mood: str, hobbies: str, challenges: str):
     conn = await get_db_connection()
     if conn is None:
@@ -815,7 +901,8 @@ async def db_add_user_info(discord_id: str, username: str, nickname: str, age: i
         created_at = datetime.now()
         cursor.execute(
             "INSERT INTO users_info (discord_id, username, nickname, age, mood, hobbies, challenges, created_at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
-            (discord_id, username, nickname, age, mood, hobbies, challenges, created_at)
+            (discord_id, username, nickname, age,
+             mood, hobbies, challenges, created_at)
         )
         conn.commit()
         return True
@@ -826,6 +913,7 @@ async def db_add_user_info(discord_id: str, username: str, nickname: str, age: i
         if conn and conn.is_connected():
             cursor.close()
             conn.close()
+
 
 async def db_add_conversation(discord_id: str, user_message: str, bot_response: str):
     conn = await get_db_connection()
@@ -849,6 +937,7 @@ async def db_add_conversation(discord_id: str, user_message: str, bot_response: 
             cursor.close()
             conn.close()
 
+
 async def db_get_conversation_history(discord_id: str, limit: int = 10):
     conn = await get_db_connection()
     if conn is None:
@@ -869,6 +958,7 @@ async def db_get_conversation_history(discord_id: str, limit: int = 10):
             cursor.close()
             conn.close()
 
+
 async def db_set_personality(discord_id: str, personality_id: str, personality_name: str):
     conn = await get_db_connection()
     if conn is None:
@@ -877,7 +967,8 @@ async def db_set_personality(discord_id: str, personality_id: str, personality_n
         cursor = conn.cursor()
         cursor.execute(
             "INSERT INTO joi_personality (discord_id, personality_id, personality_name) VALUES (%s, %s, %s) ON DUPLICATE KEY UPDATE personality_id = %s, personality_name = %s",
-            (discord_id, personality_id, personality_name, personality_id, personality_name)
+            (discord_id, personality_id, personality_name,
+             personality_id, personality_name)
         )
         conn.commit()
         return True
@@ -889,13 +980,15 @@ async def db_set_personality(discord_id: str, personality_id: str, personality_n
             cursor.close()
             conn.close()
 
+
 async def db_get_personality(discord_id: str):
     conn = await get_db_connection()
     if conn is None:
         return None
     try:
         cursor = conn.cursor(dictionary=True)
-        cursor.execute("SELECT personality_id, personality_name FROM joi_personality WHERE discord_id = %s", (discord_id,))
+        cursor.execute(
+            "SELECT personality_id, personality_name FROM joi_personality WHERE discord_id = %s", (discord_id,))
         result = cursor.fetchone()
         return result
     except Error as e:
@@ -1090,8 +1183,9 @@ def get_attendance_data(reg):
 yt_dlp.utils.DEFAULT_OUTTMPL = '%(extractor)s-%(id)s-%(title)s.%(ext)s'
 
 ytdl_format_options = {
-    'format': 'bestaudio/best',
-    'outtmpl': 'downloads/%(extractor)s-%(id)s-%(title)s.%(ext)s', # Output template
+    'format': 'bestaudio[ext=m4a]/bestaudio/best',
+    # Output template
+    'outtmpl': 'downloads/%(extractor)s-%(id)s-%(title)s.%(ext)s',
     'restrictfilenames': True,
     'noplaylist': True,
     'nocheckcertificate': True,
@@ -1100,14 +1194,18 @@ ytdl_format_options = {
     'quiet': True,
     'no_warnings': True,
     'default_search': 'auto',
-    'source_address': '0.0.0.0', # bind to ipv4 since ipv6 addresses cause issues sometimes
+    # bind to ipv4 since ipv6 addresses cause issues sometimes
+    'source_address': '0.0.0.0',
+    'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
 }
 
 ffmpeg_options = {
-    'options': '-vn' # No video
+    'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_at_eof 1 -reconnect_delay_max 5 -headers "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36\r\n"',
+    'options': '-vn'  # No video
 }
 
 ytdl = yt_dlp.YoutubeDL(ytdl_format_options)
+
 
 class YTDLSource(discord.PCMVolumeTransformer):
     def __init__(self, source, *, data, volume=0.5):
@@ -1262,10 +1360,12 @@ def schedule_reminder(guild_id: str, reminder_id: str, reminder: dict):
             scheduled_reminder_tasks.get(guild_id, {}).pop(reminder_id, None)
 
             task = asyncio.create_task(inner())
-            scheduled_reminder_tasks.setdefault(guild_id, {})[reminder_id] = task
-        
+            scheduled_reminder_tasks.setdefault(
+                guild_id, {})[reminder_id] = task
+
         # ────────────────────────────────────────────────
         # TODO MODAL# ────────────────────────────────────────────────
+
 
 class TodoCreateModal(ui.Modal, title="Add New Todo Task"):
     task_description = ui.TextInput(
@@ -1297,12 +1397,18 @@ class TodoCreateModal(ui.Modal, title="Add New Todo Task"):
             ephemeral=False
         )
 
+
 class UserInfoModal(ui.Modal, title="Tell me about yourself!"):
-    user_name = ui.TextInput(label="Your Name", placeholder="e.g. Sidharth", required=True)
-    user_nickname = ui.TextInput(label="Your Nickname", placeholder="e.g. Sid", required=True)
-    user_age = ui.TextInput(label="Your Age", placeholder="e.g. 25", required=True)
-    user_mood = ui.TextInput(label="How are you feeling today?", placeholder="e.g. Happy, stressed, curious", required=False)
-    user_about_you = ui.TextInput(label="About You (hobbies, challenges)", style=discord.TextStyle.paragraph, required=False)
+    user_name = ui.TextInput(
+        label="Your Name", placeholder="e.g. Sidharth", required=True)
+    user_nickname = ui.TextInput(
+        label="Your Nickname", placeholder="e.g. Sid", required=True)
+    user_age = ui.TextInput(
+        label="Your Age", placeholder="e.g. 25", required=True)
+    user_mood = ui.TextInput(label="How are you feeling today?",
+                             placeholder="e.g. Happy, stressed, curious", required=False)
+    user_about_you = ui.TextInput(
+        label="About You (hobbies, challenges)", style=discord.TextStyle.paragraph, required=False)
 
     async def on_submit(self, interaction: discord.Interaction):
         discord_id = str(interaction.user.id)
@@ -1310,7 +1416,8 @@ class UserInfoModal(ui.Modal, title="Tell me about yourself!"):
         nickname = self.user_nickname.value.strip()
         age = self.user_age.value.strip()
         mood = self.user_mood.value.strip() if self.user_mood.value else "Not specified"
-        about_you = self.user_about_you.value.strip() if self.user_about_you.value else "Not specified"
+        about_you = self.user_about_you.value.strip(
+        ) if self.user_about_you.value else "Not specified"
 
         try:
             age_int = int(age)
@@ -1336,6 +1443,7 @@ class UserInfoModal(ui.Modal, title="Tell me about yourself!"):
 # ────────────────────────────────────────────────
 # TODO SELECT VIEW (for removal)
 # ────────────────────────────────────────────────
+
 
 class TodoSelectView(ui.View):
     def __init__(self, todo_list: list[tuple[str, dict]]):
@@ -1377,7 +1485,7 @@ class TodoSelectView(ui.View):
             if tid == selected_id:
                 task_text = data["text"]
                 break
-        
+
         success = await db_delete_todo(guild_id, selected_id)
 
         if not success:
@@ -1475,6 +1583,7 @@ class MusicControlView(ui.View):
 # ────────────────────────────────────────────────
 # EVENT VIEWS
 # ────────────────────────────────────────────────
+
 
 class EventScheduleView(ui.View):
     def __init__(self, event_id: str, title: str):
@@ -1577,7 +1686,8 @@ class EventScheduleView(ui.View):
 
         # Fetch the updated event data to pass to schedule_spam
         events_data = await db_get_events(str(interaction.guild_id))
-        event = next((e for e in events_data if e["event_id"] == self.event_id), None)
+        event = next(
+            (e for e in events_data if e["event_id"] == self.event_id), None)
 
         if event:
             schedule_spam(str(interaction.guild_id), self.event_id, event)
@@ -1621,7 +1731,8 @@ class EventSelectView(ui.View):
         selected_id = self.select.values[0]
         guild_id = str(interaction.guild_id)
 
-        event = next((e for eid, e in self.events_list if eid == selected_id), None)
+        event = next(
+            (e for eid, e in self.events_list if eid == selected_id), None)
 
         if not event:
             await interaction.response.send_message("Event not found.", ephemeral=True)
@@ -1722,10 +1833,12 @@ class ReminderDateView(ui.View):
 
         # Fetch the updated reminder data to pass to schedule_reminder
         reminders_data = await db_get_reminders(str(interaction.guild_id))
-        reminder = next((r for r in reminders_data if r["reminder_id"] == self.reminder_id), None)
+        reminder = next(
+            (r for r in reminders_data if r["reminder_id"] == self.reminder_id), None)
 
         if reminder:
-            schedule_reminder(str(interaction.guild_id), self.reminder_id, reminder)
+            schedule_reminder(str(interaction.guild_id),
+                              self.reminder_id, reminder)
         else:
             await interaction.response.send_message("Reminder not found after update, scheduling failed.", ephemeral=True)
             return
@@ -1795,7 +1908,8 @@ class ReminderSelectView(ui.View):
 
         elif self.action == "edit":
             reminders = await db_get_reminders(guild_id)
-            reminder = next((r for r in reminders if r["reminder_id"] == selected_id), None)
+            reminder = next(
+                (r for r in reminders if r["reminder_id"] == selected_id), None)
             if reminder:
                 await interaction.response.send_message(
                     f"Selected for edit: **{reminder['title']}**\n"
@@ -1835,7 +1949,8 @@ class AssignmentSelectView(ui.View):
         guild_id = str(interaction.guild_id)
 
         assignments_data = await db_get_assignments(guild_id)
-        assign = next((a for a in assignments_data if a["assignment_id"] == selected_id), None)
+        assign = next(
+            (a for a in assignments_data if a["assignment_id"] == selected_id), None)
 
         if not assign:
             await interaction.response.send_message("Assignment not found.", ephemeral=True)
@@ -1921,7 +2036,8 @@ class NoteSelectView(ui.View):
         selected_id = self.select.values[0]
         guild_id = str(interaction.guild_id)
 
-        note = next((n for nid, n in self.notes_list if nid == selected_id), None)
+        note = next(
+            (n for nid, n in self.notes_list if nid == selected_id), None)
 
         if not note:
             await interaction.response.send_message("Note not found.", ephemeral=True)
@@ -1995,7 +2111,8 @@ class NoteAssignView(ui.View):
         guild_id = str(interaction.guild_id)
 
         notes_data = await db_get_notes(guild_id)
-        note = next((n for n in notes_data if n["note_id"] == selected_id), None)
+        note = next(
+            (n for n in notes_data if n["note_id"] == selected_id), None)
 
         if not note:
             await interaction.response.send_message("Note not found.", ephemeral=True)
@@ -2091,7 +2208,8 @@ class AssignmentAssignView(ui.View):
         guild_id = str(interaction.guild_id)
 
         assignments_data = await db_get_assignments(guild_id)
-        assign = next((a for a in assignments_data if a["assignment_id"] == selected_id), None)
+        assign = next(
+            (a for a in assignments_data if a["assignment_id"] == selected_id), None)
 
         if not assign:
             await interaction.response.send_message("Assignment not found.", ephemeral=True)
@@ -2144,7 +2262,8 @@ class SharedExpenseModal(ui.Modal):
         self.amount_input = ui.TextInput(
             label="Total Amount",
             placeholder="e.g. 1500.50",
-            default=str(initial_data.get('total_amount', '')) if initial_data else '',
+            default=str(initial_data.get('total_amount', '')
+                        ) if initial_data else '',
             required=True
         )
         self.add_item(self.amount_input)
@@ -2152,7 +2271,8 @@ class SharedExpenseModal(ui.Modal):
         self.split_input = ui.TextInput(
             label="Number to split the payments",
             placeholder="e.g. 5",
-            default=str(initial_data.get('split_count', len(mentioned_users))) if initial_data else str(len(mentioned_users)),
+            default=str(initial_data.get('split_count', len(
+                mentioned_users))) if initial_data else str(len(mentioned_users)),
             required=True
         )
         self.add_item(self.split_input)
@@ -2160,7 +2280,8 @@ class SharedExpenseModal(ui.Modal):
         self.due_date_input = ui.TextInput(
             label="Due Date (YYYY-MM-DD)",
             placeholder="2025-12-31",
-            default=initial_data.get('due_date').strftime('%Y-%m-%d') if initial_data and initial_data.get('due_date') else '',
+            default=initial_data.get('due_date').strftime(
+                '%Y-%m-%d') if initial_data and initial_data.get('due_date') else '',
             required=True
         )
         self.add_item(self.due_date_input)
@@ -2168,7 +2289,8 @@ class SharedExpenseModal(ui.Modal):
         self.url_input = ui.TextInput(
             label="Payment URL (Optional)",
             placeholder="https://gpay.app/...",
-            default=initial_data.get('payment_url', '') if initial_data else '',
+            default=initial_data.get(
+                'payment_url', '') if initial_data else '',
             required=False
         )
         self.add_item(self.url_input)
@@ -2178,18 +2300,19 @@ class SharedExpenseModal(ui.Modal):
         try:
             total_amount = float(self.amount_input.value.strip())
             split_count = int(self.split_input.value.strip())
-            due_date = datetime.strptime(self.due_date_input.value.strip(), '%Y-%m-%d')
+            due_date = datetime.strptime(
+                self.due_date_input.value.strip(), '%Y-%m-%d')
         except ValueError:
             await interaction.response.send_message("Invalid number or date format. Use YYYY-MM-DD for date.", ephemeral=True)
             return
 
         payment_url = self.url_input.value.strip()
-        
-        # Since the user specifically asked for a checkbox/option for recurring, 
+
+        # Since the user specifically asked for a checkbox/option for recurring,
         # and modals only allow 5 fields, we follow up with a button view.
         view = SharedExpenseRecurringView(
-            self.mentioned_users, 
-            self.expense_id, 
+            self.mentioned_users,
+            self.expense_id,
             {
                 'title': title,
                 'total_amount': total_amount,
@@ -2199,6 +2322,7 @@ class SharedExpenseModal(ui.Modal):
             }
         )
         await interaction.response.send_message("Is this a recurring payment (e.g. monthly)?", view=view, ephemeral=True)
+
 
 class SharedExpenseRecurringView(ui.View):
     def __init__(self, mentioned_users: list, expense_id: str, data: dict):
@@ -2211,7 +2335,7 @@ class SharedExpenseRecurringView(ui.View):
         guild_id = str(interaction.guild_id)
         channel_id = str(interaction.channel_id)
         creator_id = str(interaction.user.id)
-        
+
         title = self.data['title']
         total_amount = self.data['total_amount']
         split_count = self.data['split_count']
@@ -2238,6 +2362,7 @@ class SharedExpenseRecurringView(ui.View):
     async def recurring_no(self, interaction: discord.Interaction, button: ui.Button):
         await self.save_expense(interaction, False)
 
+
 class SharedExpenseSelectView(ui.View):
     def __init__(self, expenses: list, action: str):
         super().__init__(timeout=180.0)
@@ -2247,7 +2372,8 @@ class SharedExpenseSelectView(ui.View):
         options = []
         for exp in expenses:
             label = f"{exp['title']} - Due: {exp['due_date'].strftime('%Y-%m-%d')}"
-            options.append(SelectOption(label=label[:100], value=exp['expense_id']))
+            options.append(SelectOption(
+                label=label[:100], value=exp['expense_id']))
 
         if not options:
             self.stop()
@@ -2262,41 +2388,45 @@ class SharedExpenseSelectView(ui.View):
 
     async def callback(self, interaction: discord.Interaction):
         selected_id = self.select.values[0]
-        expense = next((e for e in self.expenses if e['expense_id'] == selected_id), None)
-        
+        expense = next(
+            (e for e in self.expenses if e['expense_id'] == selected_id), None)
+
         if not expense:
             await interaction.response.send_message("Expense not found.", ephemeral=True)
             return
 
         if self.action == "edit":
             await interaction.response.send_modal(SharedExpenseModal(expense['mentioned_users'], expense_id=selected_id, initial_data=expense))
-        
+
         elif self.action == "delete":
             success = await db_delete_shared_expense(selected_id)
             if success:
                 await interaction.response.send_message(f"🗑️ Deleted expense: **{expense['title']}**", ephemeral=True)
             else:
                 await interaction.response.send_message("Failed to delete expense.", ephemeral=True)
-        
+
         elif self.action == "mark paid":
             # Show a dropdown of mentioned users who haven't paid yet
-            unpaid = [uid for uid in expense['mentioned_users'] if uid not in expense['paid_users']]
+            unpaid = [uid for uid in expense['mentioned_users']
+                      if uid not in expense['paid_users']]
             if not unpaid:
                 await interaction.response.send_message("All mentioned users have already paid!", ephemeral=True)
                 return
-            
+
             view = MarkPaidSelectView(selected_id, expense['title'], unpaid)
             await interaction.response.send_message(f"Select user to mark as paid for **{expense['title']}**:", view=view, ephemeral=True)
+
 
 class MarkPaidSelectView(ui.View):
     def __init__(self, expense_id: str, title: str, unpaid_ids: list):
         super().__init__(timeout=180.0)
         self.expense_id = expense_id
-        
+
         options = []
         for uid in unpaid_ids:
-            options.append(SelectOption(label=f"User ID: {uid}", value=uid)) # Ideally fetch names, but ID is safe
-        
+            # Ideally fetch names, but ID is safe
+            options.append(SelectOption(label=f"User ID: {uid}", value=uid))
+
         self.select = ui.Select(placeholder="Select user...", options=options)
         self.select.callback = self.callback
         self.add_item(self.select)
@@ -2309,33 +2439,39 @@ class MarkPaidSelectView(ui.View):
         else:
             await interaction.response.send_message("Failed to update status.", ephemeral=True)
 
+
 async def send_expense_reminder(channel, exp):
     # Find unpaid users
-    unpaid = [uid for uid in exp['mentioned_users'] if uid not in exp['paid_users']]
+    unpaid = [uid for uid in exp['mentioned_users']
+              if uid not in exp['paid_users']]
     if not unpaid:
         return False
-    
+
     due_date = exp['due_date']
     now = datetime.now()
     days_left = (due_date - now).days
-    
+
     mentions = " ".join([f"<@{uid}>" for uid in unpaid])
     amount_per_person = exp['total_amount'] / exp['split_count']
-    
+
     status_text = f"due in **{days_left} days**" if days_left >= 0 else f"**OVERDUE by {abs(days_left)} days**"
-    
+
     embed = discord.Embed(
         title=f"🔔 Payment Reminder: {exp['title']}",
         description=f"This expense is {status_text} ({due_date.strftime('%Y-%m-%d')}).",
         color=0xFFA500 if days_left >= 0 else 0xFF0000
     )
-    embed.add_field(name="Total Amount", value=f"{exp['total_amount']}", inline=True)
-    embed.add_field(name="Your Share", value=f"{amount_per_person:.2f}", inline=True)
+    embed.add_field(name="Total Amount",
+                    value=f"{exp['total_amount']}", inline=True)
+    embed.add_field(name="Your Share",
+                    value=f"{amount_per_person:.2f}", inline=True)
     if exp['payment_url']:
-        embed.add_field(name="Pay Here", value=f"[Link]({exp['payment_url']})", inline=False)
-    
+        embed.add_field(name="Pay Here",
+                        value=f"[Link]({exp['payment_url']})", inline=False)
+
     await channel.send(content=f"Attention {mentions}!", embed=embed)
     return True
+
 
 class TriggerExpenseSelectView(ui.View):
     def __init__(self, expenses: list):
@@ -2345,7 +2481,8 @@ class TriggerExpenseSelectView(ui.View):
         options = []
         for exp in expenses:
             label = f"{exp['title']} - Due: {exp['due_date'].strftime('%Y-%m-%d')}"
-            options.append(SelectOption(label=label[:100], value=exp['expense_id']))
+            options.append(SelectOption(
+                label=label[:100], value=exp['expense_id']))
 
         self.select = ui.Select(
             placeholder="Select expense to trigger reminder...",
@@ -2356,15 +2493,16 @@ class TriggerExpenseSelectView(ui.View):
 
     async def callback(self, interaction: discord.Interaction):
         selected_id = self.select.values[0]
-        expense = next((e for e in self.expenses if e['expense_id'] == selected_id), None)
-        
+        expense = next(
+            (e for e in self.expenses if e['expense_id'] == selected_id), None)
+
         if not expense:
             await interaction.response.send_message("Expense not found.", ephemeral=True)
             return
 
         channel = interaction.channel
         success = await send_expense_reminder(channel, expense)
-        
+
         if success:
             await interaction.response.edit_message(content=f"✅ Reminder triggered for '**{expense['title']}**'.", view=None)
         else:
@@ -2374,6 +2512,7 @@ class TriggerExpenseSelectView(ui.View):
 # SHARED EXPENSE COMMANDS
 # ────────────────────────────────────────────────
 
+
 @tree.command(name="shared-expense", description="Create a new shared expense with mentioned users")
 @app_commands.describe(users="Mention users with @ (space separated)")
 async def cmd_shared_expense(interaction: discord.Interaction, users: str):
@@ -2381,20 +2520,22 @@ async def cmd_shared_expense(interaction: discord.Interaction, users: str):
     if not member_ids:
         await interaction.response.send_message("Please mention at least one user.", ephemeral=True)
         return
-    
+
     await interaction.response.send_modal(SharedExpenseModal(member_ids))
+
 
 @tree.command(name="edit-shared-expense", description="Edit, delete, or mark paid for a shared expense")
 async def cmd_edit_shared_expense(interaction: discord.Interaction):
     guild_id = str(interaction.guild_id)
     expenses = await db_get_shared_expenses(guild_id)
-    
+
     if not expenses:
         await interaction.response.send_message("No shared expenses found in this server.", ephemeral=True)
         return
 
-    embed = discord.Embed(title="Manage Shared Expenses", description="Choose an action below:", color=0x5865F2)
-    
+    embed = discord.Embed(title="Manage Shared Expenses",
+                          description="Choose an action below:", color=0x5865F2)
+
     class ActionView(ui.View):
         def __init__(self, expenses):
             super().__init__(timeout=180.0)
@@ -2414,11 +2555,12 @@ async def cmd_edit_shared_expense(interaction: discord.Interaction):
 
     await interaction.response.send_message(embed=embed, view=ActionView(expenses), ephemeral=True)
 
+
 @tree.command(name="trigger-shared-expense", description="Manually trigger a reminder for a shared expense")
 async def cmd_trigger_shared_expense(interaction: discord.Interaction):
     guild_id = str(interaction.guild_id)
     expenses = await db_get_shared_expenses(guild_id)
-    
+
     if not expenses:
         await interaction.response.send_message("No shared expenses found in this server.", ephemeral=True)
         return
@@ -2428,7 +2570,7 @@ async def cmd_trigger_shared_expense(interaction: discord.Interaction):
 # ────────────────────────────────────────────────
 # BACKGROUND TASK: EXPENSE REMINDERS
 # ────────────────────────────────────────────────
-from discord.ext import tasks
+
 
 @tasks.loop(time=time(hour=3, minute=30))
 async def expense_reminder_task():
@@ -2437,12 +2579,12 @@ async def expense_reminder_task():
     for guild in bot.guilds:
         guild_id = str(guild.id)
         expenses = await db_get_shared_expenses(guild_id)
-        
+
         for exp in expenses:
             due_date = exp['due_date']
             now = datetime.now()
             days_left = (due_date - now).days
-            
+
             # Remind 5 days before, and also if overdue
             if days_left <= 5:
                 channel = bot.get_channel(int(exp['channel_id']))
@@ -2452,6 +2594,7 @@ async def expense_reminder_task():
 # ────────────────────────────────────────────────
 # HELP COMMAND (updated to include new reminder commands)
 # ────────────────────────────────────────────────
+
 
 @tree.command(name="help", description="Show all available commands and their usage")
 async def cmd_help(interaction: discord.Interaction):
@@ -2492,7 +2635,8 @@ async def cmd_help(interaction: discord.Interaction):
          "Browse and read lab experiment code files"),
         ("**/shared-expense**", "Create a new shared expense with mentioned users"),
         ("**/edit-shared-expense**", "Edit, mark paid, or delete a shared expense"),
-        ("**/trigger-shared-expense**", "Manually trigger a reminder for a shared expense"),
+        ("**/trigger-shared-expense**",
+         "Manually trigger a reminder for a shared expense"),
         ("**/diskspace-adm**", "Show disk space usage for OS drive (admin only)"),
     ]
 
@@ -2599,6 +2743,7 @@ async def cmd_uptime_cli(interaction: discord.Interaction):
 # ────────────────────────────────────────────────
 # DISKSPACE ADMIN COMMANDS
 # ────────────────────────────────────────────────
+
 
 @tree.command(name="diskspace-adm", description="Show disk space usage for OS drive (admin only)")
 async def cmd_diskspace_adm(interaction: discord.Interaction):
@@ -3427,7 +3572,8 @@ async def cmd_stop_reminder(interaction: discord.Interaction):
 
                 success = await db_delete_event(guild_id, event_id)
                 if not success:
-                    print(f"Error deleting event {event_id} from database during stop-reminder.")
+                    print(
+                        f"Error deleting event {event_id} from database during stop-reminder.")
 
     if guild_id in active_reminders and not active_reminders[guild_id]:
         del active_reminders[guild_id]
@@ -3454,7 +3600,8 @@ async def cmd_fetch_assignments(interaction: discord.Interaction):
         await interaction.response.send_message("No assignments found in this server.", ephemeral=True)
         return
 
-    assign_list = [(a["assignment_id"], a) for a in assignments if a.get('subject')]
+    assign_list = [(a["assignment_id"], a)
+                   for a in assignments if a.get('subject')]
 
     if not assign_list:
         await interaction.response.send_message("No complete assignments found.", ephemeral=True)
@@ -3476,10 +3623,11 @@ async def cmd_fetch_assignments(interaction: discord.Interaction):
 # PERSONALITY SELECTION
 # ────────────────────────────────────────────────
 
+
 class PersonalitySelectView(ui.View):
     def __init__(self, current_personality_id: str | None = None):
         super().__init__(timeout=180.0)
-        
+
         options = []
         for p_id, p_data in PERSONALITIES.items():
             options.append(SelectOption(
@@ -3487,7 +3635,7 @@ class PersonalitySelectView(ui.View):
                 value=p_id,
                 default=(p_id == current_personality_id)
             ))
-        
+
         self.select = ui.Select(
             placeholder="Select JOI's personality...",
             options=options,
@@ -3498,7 +3646,7 @@ class PersonalitySelectView(ui.View):
         self.add_item(self.select)
 
     async def on_select_callback(self, interaction: discord.Interaction):
-        await interaction.response.defer() # Defer the interaction immediately
+        await interaction.response.defer()  # Defer the interaction immediately
         selected_personality_id = self.select.values[0]
         selected_personality_data = PERSONALITIES.get(selected_personality_id)
 
@@ -3517,7 +3665,7 @@ class PersonalitySelectView(ui.View):
             await interaction.followup.edit_message(
                 message_id=interaction.message.id,
                 content=f"Personality set to: **{selected_personality_data['name']}**.\n"
-                        f"You can now chat with this personality using `/talk`.",
+                f"You can now chat with this personality using `/talk`.",
                 view=None
             )
         else:
@@ -3526,28 +3674,30 @@ class PersonalitySelectView(ui.View):
                 ephemeral=True
             )
 
+
 @tree.command(name="joi-personality", description="Select JOI's personality for your conversations")
 async def cmd_joi_personality(interaction: discord.Interaction):
     user_id = str(interaction.user.id)
     current_personality = await db_get_personality(user_id)
-    
+
     current_personality_id = None
     if current_personality:
         current_personality_id = current_personality["personality_id"]
 
     view = PersonalitySelectView(current_personality_id=current_personality_id)
-    
+
     await interaction.response.send_message(
         "Choose JOI's personality:",
         view=view,
         ephemeral=True
     )
 
+
 @tree.command(name="talk", description="Talk to JOI (Gemini AI)")
 @app_commands.describe(prompt="Your message to JOI")
 async def cmd_talk(interaction: discord.Interaction, prompt: str):
     user_id = str(interaction.user.id)
-    discord_username = interaction.user.name # Get Discord username
+    discord_username = interaction.user.name  # Get Discord username
 
     # Check if user information exists
     user_info = await db_get_user_info(user_id)
@@ -3564,8 +3714,9 @@ async def cmd_talk(interaction: discord.Interaction, prompt: str):
     try:
         # Get user's selected personality
         current_personality_data = await db_get_personality(user_id)
-        
-        system_prompt_to_use = PERSONALITIES["classic"]["prompt"] # Default to Classic
+
+        # Default to Classic
+        system_prompt_to_use = PERSONALITIES["classic"]["prompt"]
         if current_personality_data and current_personality_data["personality_id"] in PERSONALITIES:
             system_prompt_to_use = PERSONALITIES[current_personality_data["personality_id"]]["prompt"]
 
@@ -3575,18 +3726,23 @@ async def cmd_talk(interaction: discord.Interaction, prompt: str):
             dynamic_system_prompt += f"\nThe user, named {user_info['username']}, is currently feeling {user_info['mood']}."
 
         # Retrieve conversation history
-        conversation_history = await db_get_conversation_history(user_id, limit=5) # Get last 5 turns
-        
+        # Get last 5 turns
+        conversation_history = await db_get_conversation_history(user_id, limit=5)
+
         # Prepare history for Gemini model
         history_for_gemini = []
         for conv_turn in conversation_history:
-            history_for_gemini.append({"role": "user", "parts": [conv_turn["user_message"]]})
+            history_for_gemini.append(
+                {"role": "user", "parts": [conv_turn["user_message"]]})
             # Ensure bot_response is not None before adding
             if conv_turn["bot_response"]:
-                history_for_gemini.append({"role": "model", "parts": [conv_turn["bot_response"]]})
+                history_for_gemini.append(
+                    {"role": "model", "parts": [conv_turn["bot_response"]]})
 
-        model = genai.GenerativeModel(model_name=MODEL_NAME, system_instruction=dynamic_system_prompt)
-        chat = model.start_chat(history=history_for_gemini) # Initialize chat with history
+        model = genai.GenerativeModel(
+            model_name=MODEL_NAME, system_instruction=dynamic_system_prompt)
+        # Initialize chat with history
+        chat = model.start_chat(history=history_for_gemini)
 
         response = chat.send_message(prompt)
 
@@ -3595,7 +3751,7 @@ async def cmd_talk(interaction: discord.Interaction, prompt: str):
             response_text = response_text[:1997] + "..."
 
         full_response_content = f"**You:** {prompt}\n**JOI:** {response_text}"
-        
+
         # Discord message limit is 2000 characters.
         # If the combined message exceeds this, we need to truncate.
         # Prioritize showing the full prompt and then as much of the response as possible.
@@ -3603,7 +3759,7 @@ async def cmd_talk(interaction: discord.Interaction, prompt: str):
             # Calculate available space for response_text after "You: {prompt}\nJOI: "
             # Adding 12 for "**You:** ", 10 for "\n**JOI:** " and 3 for "..."
             prompt_prefix_len = len(f"**You:** {prompt}\n**JOI:** ")
-            available_for_response = 2000 - prompt_prefix_len - 3 # -3 for ellipsis
+            available_for_response = 2000 - prompt_prefix_len - 3  # -3 for ellipsis
 
             if available_for_response > 0:
                 truncated_response_text = response_text[:available_for_response] + "..."
@@ -3611,7 +3767,6 @@ async def cmd_talk(interaction: discord.Interaction, prompt: str):
             else:
                 # Fallback if prompt is too long itself, though unlikely for a prompt field
                 full_response_content = f"**You:** {prompt[:1990]}...\n**JOI:** (Response too long)"
-
 
         await interaction.followup.send(full_response_content)
 
@@ -3769,6 +3924,7 @@ async def play_next(guild_id: str, voice_client):
         print(f"Error playing track: {e}")
         await play_next(guild_id, voice_client)  # skip on error
 
+
 @tree.command(name="stop", description="Stops the current audio playback and disconnects the bot")
 async def cmd_stop(interaction: discord.Interaction):
     # usually better as ephemeral here
@@ -3804,31 +3960,6 @@ async def cmd_stop(interaction: discord.Interaction):
             f"Something went wrong while disconnecting: {e}",
             ephemeral=True
         )
-
-@tree.command(name="timetable", description="Shows your timetable as an image")
-async def cmd_timetable(interaction: discord.Interaction):
-    await interaction.response.defer()
-
-    image_path = "assets/timetable.jpeg"
-
-    if not os.path.isfile(image_path):
-        await interaction.followup.send(
-            f"Timetable image not found at `{image_path}`.",
-            ephemeral=True
-        )
-        return
-
-    file = discord.File(image_path, filename="timetable.png")
-
-    embed = discord.Embed(
-        title=f"{interaction.user.display_name}'s Timetable",
-        color=0x2f3136
-    )
-    embed.set_image(url="attachment://timetable.png")
-    embed.set_footer(
-        text="JOI - EVERYTHING YOU WANT TO SEE, EVERYTHING YOU WANT TO HEAR")
-
-    await interaction.followup.send(embed=embed, file=file)
 
 
 @tree.command(name="check-attendance", description="Check your attendance from Firebase")
@@ -3999,6 +4130,15 @@ async def cmd_stop_calling(interaction: discord.Interaction):
 @bot.event
 async def on_ready():
     print(f"[JOI] Logged in as {bot.user}")
+
+    # Load Academic Calendar Cog
+    await setup_academic_calendar(bot, get_db_connection)
+    print("[COG] Academic Calendar loaded.")
+
+    # Load Timetable Manager Cog
+    await setup_timetable(bot, get_db_connection)
+    print("[COG] Timetable Manager loaded.")
+
     try:
         synced = await tree.sync()
         print(f"Synced {len(synced)} command(s)")
@@ -4067,4 +4207,3 @@ async def on_message(message):
 # START BOT
 # ────────────────────────────────────────────────
 bot.run(DISCORD_BOT_TOKEN)
-
